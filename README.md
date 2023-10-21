@@ -2,6 +2,16 @@
 
 A simple **Sp**eed **T**est CLI.
 
+![SPT Demo](https://github.com/Colerar/spt/assets/62297254/bf110756-bb07-4f18-a9e3-b09167e402ca)
+
+## Installation
+
+Install from crates.io.
+
+```bash
+cargo install spt
+```
+
 ## Build
 
 ```rust
