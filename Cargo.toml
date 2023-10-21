@@ -2,6 +2,10 @@
 name = "spt"
 version = "1.0.0"
 edition = "2021"
+description = "A simple Speed Test CLI"
+authors = ["Colerar"]
+license = "MIT"
+homepage = "https://github.com/Colerar/spt/"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
