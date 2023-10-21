@@ -1,0 +1,34 @@
+[package]
+name = "spt"
+version = "1.0.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[profile.release]
+strip = true
+lto = "thin"
+
+[dependencies]
+anyhow = "1.0.75"
+clap = { version = "4.4.6", features = ["cargo", "derive"] }
+comfy-table = "7.1.0"
+console = "0.15.7"
+futures = "0.3.28"
+futures-core = "0.3.28"
+http = "0.2.9"
+humansize = "2.1.3"
+hyper = { version = "0.14.27", features = ["http1", "http2", "h2", "stream"] }
+hyper-rustls = { version = "0.24.1", features = [
+  "http1",
+  "http2",
+  "rustls-native-certs",
+] }
+indicatif = { version = "0.17.7" }
+parking_lot = "0.12.1"
+tokio = { version = "1.33.0", features = [
+  "sync",
+  "parking_lot",
+  "macros",
+  "rt-multi-thread",
+] }
