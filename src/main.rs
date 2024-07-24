@@ -4,18 +4,24 @@ use std::{
   io::{BufRead, BufReader},
   path::{Path, PathBuf},
   str::FromStr,
-  time::Instant,
+  time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context};
 use clap::{builder::styling::*, ArgGroup, Parser};
 use comfy_table::{modifiers::*, presets::*, Table};
 use console::style;
-use futures::{StreamExt, TryStreamExt};
-use hyper::{client::Client as HyperClient, Body, Method, Request, Uri};
+use futures::StreamExt;
+use http_body_util::BodyExt;
+use hyper::{body::Bytes, Method, Request, Uri};
+use hyper_util::{client::legacy::Client as HyperClient, rt::TokioExecutor};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-type TlsHyper = HyperClient<hyper_rustls::HttpsConnector<hyper::client::HttpConnector>>;
+type Body = http_body_util::Full<Bytes>;
+type TlsHyper = HyperClient<
+  hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
+  Body,
+>;
 
 fn clap_v3_styles() -> Styles {
   Styles::styled()
@@ -43,13 +49,13 @@ struct Cli {
 async fn main() -> anyhow::Result<()> {
   let cli = Cli::parse();
   let https = hyper_rustls::HttpsConnectorBuilder::new()
-    .with_native_roots()
+    .with_native_roots()?
     .https_or_http()
     .enable_http1()
     .enable_http2()
     .build();
 
-  let client: TlsHyper = HyperClient::builder().build(https);
+  let client: TlsHyper = HyperClient::builder(TokioExecutor::new()).build(https);
   let builders = match cli {
     Cli {
       urls: Some(urls), ..
@@ -67,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
 
   for builder in builders {
     let req = builder
-      .body(Body::empty())
+      .body(Body::default())
       .context("Failed to build request")?;
     let uri = req.uri().clone();
     let method = req.method().clone();
@@ -138,7 +144,12 @@ async fn test_and_render(client: &TlsHyper, request: Request<Body>) -> anyhow::R
   );
 
   let req_start = Instant::now();
-  let resp = client.request(request).await?;
+  let resp = tokio::time::timeout(Duration::from_secs(10), async move {
+    client.request(request).await
+  })
+  .await
+  .context("Timed out for 10s")?
+  .context("Failed to send request")?;
   let elapsed = req_start.elapsed();
 
   println!("{:?} {} {:?}", resp.version(), resp.status(), elapsed);
@@ -155,7 +166,7 @@ async fn test_and_render(client: &TlsHyper, request: Request<Body>) -> anyhow::R
       str.parse().ok()
     });
 
-  let mut body = resp.into_body().into_stream();
+  let mut body = resp.into_body().into_data_stream();
 
   let (tx, mut rx) = tokio::sync::mpsc::channel::<usize>(1);
   let download = tokio::spawn(async move {
@@ -168,6 +179,7 @@ async fn test_and_render(client: &TlsHyper, request: Request<Body>) -> anyhow::R
 
   let render = tokio::spawn(async move {
     let pb = ProgressBar::with_draw_target(total, ProgressDrawTarget::stderr());
+    pb.enable_steady_tick(Duration::from_millis(200));
     const STY_TEMP: &str = "{spinner:.green} [{elapsed_precise}] [{bar:.cyan/blue}] {percent}% ({binary_bytes_per_sec}, {eta})";
     pb.set_style(
       ProgressStyle::with_template(STY_TEMP)
@@ -180,6 +192,9 @@ async fn test_and_render(client: &TlsHyper, request: Request<Body>) -> anyhow::R
     };
 
     while let Some(len) = rx.recv().await {
+      if pb.elapsed().as_secs() > 60 {
+        bail!("Testing takes too long (> 60s), stopping...");
+      }
       update(len, false);
     }
 
@@ -189,10 +204,10 @@ async fn test_and_render(client: &TlsHyper, request: Request<Body>) -> anyhow::R
     println!();
     println!();
 
-    (pb.position() * 1000).checked_div(pb.elapsed().as_millis() as u64)
+    Ok((pb.position() * 1000).checked_div(pb.elapsed().as_millis() as u64))
   });
   download.await.context("Error when downloading")?;
-  let speed = render.await.context("Error when rendering")?;
+  let speed = render.await.context("Failed to wait render thread")??;
 
   Ok(speed)
 }
